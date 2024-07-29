@@ -41,8 +41,6 @@ import dagger.hilt.android.HiltAndroidApp
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    val viewModel:GameViewModel by viewModels()
-
 
     @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,7 +126,7 @@ class MainActivity : ComponentActivity() {
                                     contentAlignment = Alignment.Center
                                 ) {
                                     if (index == 0) {
-                                        ScheduleScreen()
+                                        ScheduleScreen(this@MainActivity)
 
                                     } else {
                                         GamesScreen()
