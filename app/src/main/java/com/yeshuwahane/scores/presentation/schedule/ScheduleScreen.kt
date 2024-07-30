@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -33,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,9 +54,11 @@ import com.yeshuwahane.scores.domain.loadJSONFromAsset
 import com.yeshuwahane.scores.presentation.games.TeamsResponse
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import java.time.LocalDate
+import java.time.Month
+import java.time.OffsetDateTime
 
 
-@OptIn(ExperimentalSerializationApi::class)
 @Composable
 fun ScheduleScreen(context: Context) {
     val viewModel: ScheduleViewModel = viewModel()
@@ -63,7 +68,19 @@ fun ScheduleScreen(context: Context) {
     }
 
     val uiState by viewModel.uiState.collectAsState()
-    var selectedMonthIndex by remember { mutableStateOf(6) }
+    var selectedMonthIndex by remember { mutableStateOf(6) } // Default to July
+    val scrollState = rememberLazyListState()
+
+    // Update selectedMonthIndex based on scroll state
+    LaunchedEffect(remember { derivedStateOf { scrollState.firstVisibleItemIndex } }) {
+        // Assume each item is of fixed height and determine the month based on the scroll position
+        val visibleItemIndex = scrollState.firstVisibleItemIndex
+        val itemHeight = 100 // Replace with the actual height of your game card
+        val monthsPerPage = 5 // Number of items that can fit in a month
+
+        // Update month index based on visible item
+        selectedMonthIndex = (visibleItemIndex / monthsPerPage).coerceIn(0, 11)
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         DateComponent(selectedMonthIndex) { newMonthIndex ->
@@ -71,63 +88,79 @@ fun ScheduleScreen(context: Context) {
         }
 
         uiState.schedules.let { scheduleData ->
-            ScheduleStatic(scheduleData, selectedMonthIndex)
+            ScheduleStatic(scheduleData, selectedMonthIndex, scrollState)
         }
     }
 }
 
 @Composable
-fun ScheduleStatic(schedules: List<Schedule>, selectedMonthIndex: Int) {
+fun ScheduleStatic(schedules: List<Schedule>, selectedMonthIndex: Int, scrollState: LazyListState) {
     val months = listOf(
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
     )
 
+    // Debugging log for schedule count
+    Log.d("ScheduleStatic", "Total schedules: ${schedules.size}")
+
+    // Convert selectedMonthIndex to Month enum
+    val selectedMonth = Month.of(selectedMonthIndex + 1) // Months are 1-based (January is 1)
+
     val filteredSchedules = schedules.filter { schedule ->
-        val scheduleMonth = months.indexOf(schedule.gametime.split(" ")[0])
-        scheduleMonth == selectedMonthIndex
+        try {
+            val dateTime = OffsetDateTime.parse(schedule.gametime)
+            val scheduleMonth = dateTime.month
+            // Log the parsed month and the index
+            Log.d("ScheduleStatic", "Gametime: ${schedule.gametime}, Month: ${scheduleMonth}, Index: $selectedMonthIndex")
+
+            scheduleMonth == selectedMonth
+        } catch (e: Exception) {
+            // Log parsing errors if any
+            Log.e("ScheduleStatic", "Date parsing error for ${schedule.gametime}", e)
+            false
+        }
     }
 
+    // Debugging log for filtered schedule count
+    Log.d("ScheduleStatic", "Filtered schedules for month index $selectedMonthIndex: ${filteredSchedules.size}")
+
     LazyColumn(
+        state = scrollState,
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         items(filteredSchedules) { schedule ->
-            Log.d("ScheduleStatic", "Home Logo: , Away Logo: ")
-
             GameCard(
                 gameInfo = schedule.gametime,
                 team1 = schedule.h.tc.orEmpty(),
-                score1 = schedule.h.s?.toInt() ?: 0,
+                score1 = schedule.h.s?.toIntOrNull() ?: 0, // Safe conversion
                 team2 = schedule.v.tc.orEmpty(),
-                score2 = schedule.v.s?.toInt() ?: 0,
+                score2 = schedule.v.s?.toIntOrNull() ?: 0, // Safe conversion
                 showTicket = !schedule.buy_ticket.isNullOrBlank(),
                 teamLogo1 = "homeLogo",
                 teamLogo2 = "awayLogo"
             )
+            // Debugging log for each game card
+            Log.d("ScheduleStatic", "Displaying game: ${schedule.gametime}, Home: ${schedule.h.tc}, Away: ${schedule.v.tc}")
         }
     }
 }
+
+
+
+
+
+
 
 @Composable
 fun DateComponent(selectedMonthIndex: Int, onMonthChange: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
     val months = listOf(
-        "January 2023",
-        "February 2023",
-        "March 2023",
-        "April 2023",
-        "May 2023",
-        "June 2023",
-        "July 2023",
-        "August 2023",
-        "September 2023",
-        "October 2023",
-        "November 2023",
-        "December 2023"
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
     )
 
     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
@@ -189,6 +222,10 @@ fun DateComponent(selectedMonthIndex: Int, onMonthChange: (Int) -> Unit) {
         }
     }
 }
+
+
+
+
 
 @Composable
 fun GameCard(
@@ -262,3 +299,5 @@ fun GameCard(
         }
     }
 }
+
+
