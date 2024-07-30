@@ -15,12 +15,7 @@ class GameViewModel @Inject constructor(val repositoryImpl: ScoresRepository): V
 
     fun getSchedules(){
 
-        viewModelScope.launch {
-            val scores = repositoryImpl.getTeams()
 
-            Log.d("alien","scores: ${scores.data.teams}")
-
-        }
     }
 
 }

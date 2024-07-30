@@ -1,5 +1,5 @@
 package com.yeshuwahane.scores.data.model.schedule
 
-data class SchedulesData(
+data class SchedulesDto(
     val `data`: Data
 )

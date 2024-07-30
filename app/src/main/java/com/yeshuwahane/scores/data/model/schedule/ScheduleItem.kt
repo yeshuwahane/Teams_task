@@ -1,6 +1,6 @@
 package com.yeshuwahane.scores.data.model.schedule
 
-data class Schedule(
+data class ScheduleItem(
     val arena_city: String,
     val arena_name: String,
     val arena_state: String,
