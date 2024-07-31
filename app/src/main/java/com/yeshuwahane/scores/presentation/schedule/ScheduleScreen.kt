@@ -44,86 +44,105 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.yeshuwahane.scores.domain.loadJSONFromAsset
-import com.yeshuwahane.scores.presentation.games.TeamsResponse
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.json.Json
-import java.time.LocalDate
 import java.time.Month
 import java.time.OffsetDateTime
+
+
 
 
 @Composable
 fun ScheduleScreen(context: Context) {
     val viewModel: ScheduleViewModel = viewModel()
-
     LaunchedEffect(Unit) {
         viewModel.getSchedule(context)
     }
 
     val uiState by viewModel.uiState.collectAsState()
-    var selectedMonthIndex by remember { mutableStateOf(6) } // Default to July
+    var selectedMonthIndex by remember { mutableStateOf(0) }
     val scrollState = rememberLazyListState()
+    var itemHeight by remember { mutableStateOf(0) }
+
+    // Group schedules by month
+    val schedulesByMonth = uiState.schedules.groupBy {
+        try {
+            OffsetDateTime.parse(it.gametime).monthValue - 1
+        } catch (e: Exception) {
+            Log.e("ScheduleScreen", "Date parsing error for ${it.gametime}", e)
+            -1
+        }
+    }.filterKeys { it in 0..11 }.toSortedMap()
+
+    // List of available months
+    val availableMonths = schedulesByMonth.keys.toList()
 
     // Update selectedMonthIndex based on scroll state
-    LaunchedEffect(remember { derivedStateOf { scrollState.firstVisibleItemIndex } }) {
-        // Assume each item is of fixed height and determine the month based on the scroll position
-        val visibleItemIndex = scrollState.firstVisibleItemIndex
-        val itemHeight = 100 // Replace with the actual height of your game card
-        val monthsPerPage = 5 // Number of items that can fit in a month
+    LaunchedEffect(scrollState.firstVisibleItemIndex, scrollState.firstVisibleItemScrollOffset, itemHeight) {
+        if (itemHeight > 0 && schedulesByMonth.isNotEmpty()) {
+            val visibleItemIndex = scrollState.firstVisibleItemIndex
+            val positionOffset = scrollState.firstVisibleItemScrollOffset.toFloat()
+            val itemIndex = (visibleItemIndex + positionOffset / itemHeight).toInt()
 
-        // Update month index based on visible item
-        selectedMonthIndex = (visibleItemIndex / monthsPerPage).coerceIn(0, 11)
+            // Find the corresponding month for the visible item
+            val monthCounts = schedulesByMonth.map { it.value.size }
+            var cumulativeItems = 0
+            selectedMonthIndex = monthCounts.indexOfFirst {
+                cumulativeItems += it
+                itemIndex < cumulativeItems
+            }.coerceIn(0, monthCounts.size - 1)
+        }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        DateComponent(selectedMonthIndex) { newMonthIndex ->
-            selectedMonthIndex = newMonthIndex
+    // Scroll to the position if the month changes
+    LaunchedEffect(selectedMonthIndex) {
+        if (schedulesByMonth.isNotEmpty() && itemHeight > 0) {
+            val monthCounts = schedulesByMonth.map { it.value.size }
+            val scrollToIndex = monthCounts.take(selectedMonthIndex).sum()
+            scrollState.animateScrollToItem(scrollToIndex)
         }
+    }
 
-        uiState.schedules.let { scheduleData ->
-            ScheduleStatic(scheduleData, selectedMonthIndex, scrollState)
+    if (availableMonths.isNotEmpty()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            DateComponent(selectedMonthIndex, availableMonths) { newMonthIndex ->
+                selectedMonthIndex = newMonthIndex
+            }
+
+            // Flatten schedules into a single list for LazyColumn
+            val flatSchedules = schedulesByMonth.flatMap { it.value }
+
+            ScheduleStatic(flatSchedules, scrollState) { height ->
+                itemHeight = height
+            }
         }
+    } else {
+        // Handle case where there are no schedules
+        Text(
+            text = "No schedules available",
+            modifier = Modifier.fillMaxSize(),
+            textAlign = TextAlign.Center
+        )
     }
 }
 
+
+
+
+
+
 @Composable
-fun ScheduleStatic(schedules: List<Schedule>, selectedMonthIndex: Int, scrollState: LazyListState) {
-    val months = listOf(
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"
-    )
-
-    // Debugging log for schedule count
-    Log.d("ScheduleStatic", "Total schedules: ${schedules.size}")
-
-    // Convert selectedMonthIndex to Month enum
-    val selectedMonth = Month.of(selectedMonthIndex + 1) // Months are 1-based (January is 1)
-
-    val filteredSchedules = schedules.filter { schedule ->
-        try {
-            val dateTime = OffsetDateTime.parse(schedule.gametime)
-            val scheduleMonth = dateTime.month
-            // Log the parsed month and the index
-            Log.d("ScheduleStatic", "Gametime: ${schedule.gametime}, Month: ${scheduleMonth}, Index: $selectedMonthIndex")
-
-            scheduleMonth == selectedMonth
-        } catch (e: Exception) {
-            // Log parsing errors if any
-            Log.e("ScheduleStatic", "Date parsing error for ${schedule.gametime}", e)
-            false
-        }
-    }
-
-    // Debugging log for filtered schedule count
-    Log.d("ScheduleStatic", "Filtered schedules for month index $selectedMonthIndex: ${filteredSchedules.size}")
-
+fun ScheduleStatic(
+    schedules: List<Schedule>,
+    scrollState: LazyListState,
+    onItemHeightChange: (Int) -> Unit
+) {
     LazyColumn(
         state = scrollState,
         modifier = Modifier
@@ -131,97 +150,107 @@ fun ScheduleStatic(schedules: List<Schedule>, selectedMonthIndex: Int, scrollSta
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(filteredSchedules) { schedule ->
+        items(schedules) { schedule ->
             GameCard(
                 gameInfo = schedule.gametime,
                 team1 = schedule.h.tc.orEmpty(),
-                score1 = schedule.h.s?.toIntOrNull() ?: 0, // Safe conversion
+                score1 = schedule.h.s?.toIntOrNull() ?: 0,
                 team2 = schedule.v.tc.orEmpty(),
-                score2 = schedule.v.s?.toIntOrNull() ?: 0, // Safe conversion
+                score2 = schedule.v.s?.toIntOrNull() ?: 0,
                 showTicket = !schedule.buy_ticket.isNullOrBlank(),
                 teamLogo1 = "homeLogo",
-                teamLogo2 = "awayLogo"
+                teamLogo2 = "awayLogo",
+                onGloballyPositioned = { coordinates ->
+                    // Measure item height when it is first positioned
+                    val height = coordinates.size.height
+                    if (height > 0) {
+                        onItemHeightChange(height)
+                    }
+                }
             )
-            // Debugging log for each game card
-            Log.d("ScheduleStatic", "Displaying game: ${schedule.gametime}, Home: ${schedule.h.tc}, Away: ${schedule.v.tc}")
         }
     }
 }
-
-
 
 
 
 
 
 @Composable
-fun DateComponent(selectedMonthIndex: Int, onMonthChange: (Int) -> Unit) {
+fun DateComponent(selectedMonthIndex: Int, availableMonths: List<Int>, onMonthChange: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
-    val months = listOf(
+    val allMonths = listOf(
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
     )
 
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier
-                .background(Color.DarkGray, shape = RoundedCornerShape(8.dp))
-                .padding(10.dp)
-                .fillMaxWidth()
-                .clickable { expanded = !expanded }
-        ) {
-            IconButton(onClick = {
-                if (selectedMonthIndex > 0) {
-                    onMonthChange(selectedMonthIndex - 1)
-                }
-            }) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Arrow Up",
-                    tint = Color.White
-                )
-            }
-            Text(
-                text = months[selectedMonthIndex],
-                color = Color.White,
-                fontSize = 16.sp,
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center
-            )
-            IconButton(onClick = {
-                if (selectedMonthIndex < months.size - 1) {
-                    onMonthChange(selectedMonthIndex + 1)
-                }
-            }) {
-                Icon(
-                    imageVector = Icons.Default.ArrowDropDown,
-                    contentDescription = "Arrow Down",
-                    tint = Color.White
-                )
-            }
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.background(Color.DarkGray)
-        ) {
-            months.forEachIndexed { index, month ->
-                DropdownMenuItem(
-                    onClick = {
-                        onMonthChange(index)
-                        expanded = false
-                    },
-                    text = {
-                        Text(text = month, color = Color.White, textAlign = TextAlign.Center)
+    // Filter the list of months to only include those that are available
+    val months = availableMonths.map { allMonths[it] }
+
+    if (months.isNotEmpty()) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .background(Color.DarkGray, shape = RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+            ) {
+                IconButton(onClick = {
+                    if (selectedMonthIndex > 0) {
+                        onMonthChange(selectedMonthIndex - 1)
                     }
+                }) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Arrow Up",
+                        tint = Color.White
+                    )
+                }
+                Text(
+                    text = months[selectedMonthIndex],
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center
                 )
+                IconButton(onClick = {
+                    if (selectedMonthIndex < months.size - 1) {
+                        onMonthChange(selectedMonthIndex + 1)
+                    }
+                }) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = "Arrow Down",
+                        tint = Color.White
+                    )
+                }
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(Color.DarkGray)
+            ) {
+                months.forEachIndexed { index, month ->
+                    DropdownMenuItem(
+                        onClick = {
+                            onMonthChange(index)
+                            expanded = false
+                        },
+                        text = {
+                            Text(text = month, color = Color.White, textAlign = TextAlign.Center)
+                        }
+                    )
+                }
             }
         }
     }
 }
+
+
 
 
 
@@ -236,12 +265,14 @@ fun GameCard(
     score2: Int,
     teamLogo1: String,
     teamLogo2: String,
-    showTicket: Boolean = false
+    showTicket: Boolean = false,
+    onGloballyPositioned: (LayoutCoordinates) -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .onGloballyPositioned(onGloballyPositioned),
         colors = CardDefaults.cardColors(containerColor = Color.DarkGray)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -299,5 +330,8 @@ fun GameCard(
         }
     }
 }
+
+
+
 
 
