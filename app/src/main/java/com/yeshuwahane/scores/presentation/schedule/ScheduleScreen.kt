@@ -54,8 +54,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import java.time.Month
 import java.time.OffsetDateTime
-
-
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 
 @Composable
@@ -66,9 +68,13 @@ fun ScheduleScreen(context: Context) {
     }
 
     val uiState by viewModel.uiState.collectAsState()
-    var selectedMonthIndex by remember { mutableStateOf(0) }
     val scrollState = rememberLazyListState()
     var itemHeight by remember { mutableStateOf(0) }
+    var initialScrollIndex by remember { mutableStateOf(-1) } // To store the index for initial scroll
+    var selectedMonthIndex by remember { mutableStateOf(0) } // Manage the selected month index
+
+    // Define the app team ID here
+    val appTeamId = "1610612748" // Replace with your actual app team ID
 
     // Group schedules by month
     val schedulesByMonth = uiState.schedules.groupBy {
@@ -86,25 +92,36 @@ fun ScheduleScreen(context: Context) {
     // Flatten schedules into a single list for LazyColumn
     val flatSchedules = schedulesByMonth.flatMap { it.value }
 
-    // Determine the position to scroll to based on the current date
-    val now = OffsetDateTime.now()
-    val currentMonthIndex = now.monthValue - 1
-    val upcomingGameIndex = flatSchedules.indexOfFirst {
-        OffsetDateTime.parse(it.gametime).isAfter(now)
-    }.takeIf { it >= 0 } ?: flatSchedules.indexOfFirst {
-        OffsetDateTime.parse(it.gametime).monthValue - 1 == currentMonthIndex
-    }.takeIf { it >= 0 } ?: 0
+    // Calculate the index for the current date
+    val currentDate = OffsetDateTime.now().withOffsetSameInstant(ZoneOffset.UTC)
+    val currentIndex = flatSchedules.indexOfFirst { schedule ->
+        try {
+            val gameDate = OffsetDateTime.parse(schedule.gametime).withOffsetSameInstant(ZoneOffset.UTC)
+            gameDate.isAfter(currentDate) || gameDate.isEqual(currentDate)
+        } catch (e: Exception) {
+            Log.e("ScheduleScreen", "Date parsing error for ${schedule.gametime}", e)
+            false
+        }
+    }
 
-    // Set initial scroll position to the current date or upcoming game
-    LaunchedEffect(flatSchedules, itemHeight) {
-        if (flatSchedules.isNotEmpty() && itemHeight > 0) {
-            val initialIndex = upcomingGameIndex.coerceIn(0, flatSchedules.size - 1)
-            scrollState.scrollToItem(initialIndex)
+    // Set the initial scroll index on first composition
+    LaunchedEffect(flatSchedules) {
+        if (currentIndex != -1) {
+            initialScrollIndex = currentIndex
+            scrollState.scrollToItem(initialScrollIndex)
+        }
+    }
+
+    // Update scroll state to position based on current date
+    LaunchedEffect(currentIndex) {
+        if (currentIndex != -1 && itemHeight > 0 && initialScrollIndex == -1) {
+            // Scroll to the position of the current date if not yet scrolled
+            scrollState.animateScrollToItem(currentIndex)
         }
     }
 
     // Update selectedMonthIndex based on scroll state
-    LaunchedEffect(remember { derivedStateOf { scrollState.firstVisibleItemIndex } }, remember { derivedStateOf { scrollState.firstVisibleItemScrollOffset } }, itemHeight) {
+    LaunchedEffect(scrollState.firstVisibleItemIndex, scrollState.firstVisibleItemScrollOffset, itemHeight) {
         if (itemHeight > 0 && schedulesByMonth.isNotEmpty()) {
             val visibleItemIndex = scrollState.firstVisibleItemIndex
             val positionOffset = scrollState.firstVisibleItemScrollOffset.toFloat()
@@ -120,7 +137,7 @@ fun ScheduleScreen(context: Context) {
         }
     }
 
-    // Scroll to the selected month
+    // Scroll to the position if the month changes
     LaunchedEffect(selectedMonthIndex) {
         if (schedulesByMonth.isNotEmpty() && itemHeight > 0) {
             val monthCounts = schedulesByMonth.map { it.value.size }
@@ -135,7 +152,7 @@ fun ScheduleScreen(context: Context) {
                 selectedMonthIndex = newMonthIndex
             }
 
-            ScheduleStatic(flatSchedules, scrollState) { height ->
+            ScheduleStatic(flatSchedules, scrollState, appTeamId) { height ->
                 itemHeight = height
             }
         }
@@ -153,10 +170,12 @@ fun ScheduleScreen(context: Context) {
 
 
 
+
 @Composable
 fun ScheduleStatic(
     schedules: List<Schedule>,
     scrollState: LazyListState,
+    appTeamId: String, // Add this parameter
     onItemHeightChange: (Int) -> Unit
 ) {
     LazyColumn(
@@ -174,8 +193,9 @@ fun ScheduleStatic(
                 team2 = schedule.v.tc.orEmpty(),
                 score2 = schedule.v.s?.toIntOrNull() ?: 0,
                 showTicket = !schedule.buy_ticket.isNullOrBlank(),
-                teamLogo1 = "homeLogo",
-                teamLogo2 = "awayLogo",
+                teamLogo1 = "homeLogo", // Replace with actual team logo URL
+                teamLogo2 = "awayLogo", // Replace with actual team logo URL
+                isHomeTeam = schedule.h.tid == appTeamId, // Determine if the app team is the home team
                 onGloballyPositioned = { coordinates ->
                     // Measure item height when it is first positioned
                     val height = coordinates.size.height
@@ -187,6 +207,11 @@ fun ScheduleStatic(
         }
     }
 }
+
+
+
+
+
 
 @Composable
 fun DateComponent(selectedMonthIndex: Int, availableMonths: List<Int>, onMonthChange: (Int) -> Unit) {
@@ -281,8 +306,12 @@ fun GameCard(
     teamLogo1: String,
     teamLogo2: String,
     showTicket: Boolean = false,
+    isHomeTeam: Boolean, // Add this parameter
     onGloballyPositioned: (LayoutCoordinates) -> Unit
 ) {
+    // Convert game info time from UTC to local time
+    val localGameTime = convertUtcToLocal(gameInfo)
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -291,7 +320,7 @@ fun GameCard(
         colors = CardDefaults.cardColors(containerColor = Color.DarkGray)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = gameInfo, color = Color.Gray, fontSize = 12.sp)
+            Text(text = localGameTime, color = Color.Gray, fontSize = 12.sp)
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -313,9 +342,21 @@ fun GameCard(
                         Text(text = score1.toString(), color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
-                Text(
-                    text = "vs", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Light
-                )
+                if (isHomeTeam) {
+                    Text(
+                        text = "VS",
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }else{
+                    Text(
+                        text = "@",
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Row {
                     if (score2 != -1) {
                         Text(text = score2.toString(), color = Color.White, fontWeight = FontWeight.Bold)
@@ -348,5 +389,25 @@ fun GameCard(
 
 
 
+
+
+
+
+fun convertUtcToLocal(utcDateTime: String): String {
+    // Parse the UTC date-time string
+    val utcDateTimeObj = OffsetDateTime.parse(utcDateTime)
+
+    // Get the system's default time zone
+    val localZoneId = ZoneId.systemDefault()
+
+    // Convert UTC to local time
+    val localDateTime = utcDateTimeObj.atZoneSameInstant(localZoneId)
+
+    // Define your desired format
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+    // Format the local date-time to a string
+    return localDateTime.format(formatter)
+}
 
 
