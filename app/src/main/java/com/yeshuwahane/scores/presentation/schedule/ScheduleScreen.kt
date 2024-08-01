@@ -83,8 +83,28 @@ fun ScheduleScreen(context: Context) {
     // List of available months
     val availableMonths = schedulesByMonth.keys.toList()
 
+    // Flatten schedules into a single list for LazyColumn
+    val flatSchedules = schedulesByMonth.flatMap { it.value }
+
+    // Determine the position to scroll to based on the current date
+    val now = OffsetDateTime.now()
+    val currentMonthIndex = now.monthValue - 1
+    val upcomingGameIndex = flatSchedules.indexOfFirst {
+        OffsetDateTime.parse(it.gametime).isAfter(now)
+    }.takeIf { it >= 0 } ?: flatSchedules.indexOfFirst {
+        OffsetDateTime.parse(it.gametime).monthValue - 1 == currentMonthIndex
+    }.takeIf { it >= 0 } ?: 0
+
+    // Set initial scroll position to the current date or upcoming game
+    LaunchedEffect(flatSchedules, itemHeight) {
+        if (flatSchedules.isNotEmpty() && itemHeight > 0) {
+            val initialIndex = upcomingGameIndex.coerceIn(0, flatSchedules.size - 1)
+            scrollState.scrollToItem(initialIndex)
+        }
+    }
+
     // Update selectedMonthIndex based on scroll state
-    LaunchedEffect(scrollState.firstVisibleItemIndex, scrollState.firstVisibleItemScrollOffset, itemHeight) {
+    LaunchedEffect(remember { derivedStateOf { scrollState.firstVisibleItemIndex } }, remember { derivedStateOf { scrollState.firstVisibleItemScrollOffset } }, itemHeight) {
         if (itemHeight > 0 && schedulesByMonth.isNotEmpty()) {
             val visibleItemIndex = scrollState.firstVisibleItemIndex
             val positionOffset = scrollState.firstVisibleItemScrollOffset.toFloat()
@@ -100,7 +120,7 @@ fun ScheduleScreen(context: Context) {
         }
     }
 
-    // Scroll to the position if the month changes
+    // Scroll to the selected month
     LaunchedEffect(selectedMonthIndex) {
         if (schedulesByMonth.isNotEmpty() && itemHeight > 0) {
             val monthCounts = schedulesByMonth.map { it.value.size }
@@ -115,9 +135,6 @@ fun ScheduleScreen(context: Context) {
                 selectedMonthIndex = newMonthIndex
             }
 
-            // Flatten schedules into a single list for LazyColumn
-            val flatSchedules = schedulesByMonth.flatMap { it.value }
-
             ScheduleStatic(flatSchedules, scrollState) { height ->
                 itemHeight = height
             }
@@ -131,7 +148,6 @@ fun ScheduleScreen(context: Context) {
         )
     }
 }
-
 
 
 
@@ -172,10 +188,6 @@ fun ScheduleStatic(
     }
 }
 
-
-
-
-
 @Composable
 fun DateComponent(selectedMonthIndex: Int, availableMonths: List<Int>, onMonthChange: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -211,7 +223,7 @@ fun DateComponent(selectedMonthIndex: Int, availableMonths: List<Int>, onMonthCh
                     )
                 }
                 Text(
-                    text = months[selectedMonthIndex],
+                    text = months.getOrElse(selectedMonthIndex) { "" },
                     color = Color.White,
                     fontSize = 16.sp,
                     modifier = Modifier.weight(1f),
@@ -249,6 +261,9 @@ fun DateComponent(selectedMonthIndex: Int, availableMonths: List<Int>, onMonthCh
         }
     }
 }
+
+
+
 
 
 
